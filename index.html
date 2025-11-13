@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>紅藍大戰遊戲（85 局 / 可視化牌路 + 5 策略）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 16px;
+      background: #111827;
+      color: #e5e7eb;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    .panel {
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      background: #1f2937;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    label {
+      margin-right: 4px;
+    }
+    input[type="number"] {
+      width: 110px;
+    }
+    button {
+      cursor: pointer;
+      border-radius: 6px;
+      border: none;
+      padding: 6px 12px;
+      background: #fbbf24;
+      color: #111827;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: #4b5563;
+      color: #e5e7eb;
+    }
+    select {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #4b5563;
+      background: #111827;
+      color: #e5e7eb;
+    }
+    .stats {
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .log {
+      width: 100%;
+      height: 220px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 12px;
+      margin-right: 4px;
+    }
+    .badge.banker { background: #1d4ed8; }
+    .badge.player { background: #be123c; }
+    .badge.tie    { background: #4b5563; }
+    .highlight {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    /* 牌路可視化（每欄 6 局，向右延伸） */
+    .bead-panel-title {
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+    .bead-legend {
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .legend-dot.banker { background: #ef4444; } /* 紅：莊 */
+    .legend-dot.player { background: #3b82f6; } /* 藍：閒 */
+    .legend-dot.tie    { background: #22c55e; } /* 綠：和 */
+
+    .bead-board {
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 8px;
+      background: #020617;
+      display: grid;
+      grid-auto-flow: column;                /* 先塞滿一欄 6 格，再往右長 */
+      grid-template-rows: repeat(6, 22px);   /* 每欄 6 行 */
+      grid-auto-columns: 22px;               /* 每欄寬度 */
+      column-gap: 4px;
+      row-gap: 4px;
+      width: max-content;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+    .bead-cell {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1px solid #4b5563;
+      box-sizing: border-box;
+    }
+    .bead-cell.banker-dot { background: #ef4444; } /* 紅：莊 */
+    .bead-cell.player-dot { background: #3b82f6; } /* 藍：閒 */
+    .bead-cell.tie-dot    { background: #22c55e; } /* 綠：和 */
+
+  </style>
+</head>
+<body>
+<h1>百家樂練習遊戲（85 局 / 牌路 + 策略模擬）</h1>
+
+<!-- 模式選擇 + 牌路設定 -->
+<div class="panel">
+  <div class="row">
+    <strong>牌路模式：</strong>
+    <label><input type="radio" name="mode" value="custom" checked> 自訂牌路</label>
+    <label><input type="radio" name="mode" value="random"> 隨機牌路</label>
+    <button class="secondary" id="btnInit">建立 / 重新產生 85 局</button>
+  </div>
+
+  <div id="customArea">
+    <div style="font-size:13px; margin-bottom:4px;">
+      用 <strong>B</strong>=莊（紅）、<strong>P</strong>=閒（藍）、<strong>T</strong>=和局（綠），
+      任意用空白、逗號或換行分隔，需剛好 85 個。
+    </div>
+    <textarea id="customSequence"
+      style="width:100%;height:80px;"
+      placeholder="例如：B P P T B ...（共 85 個結果）"></textarea>
+  </div>
+
+  <div id="randomHint" style="display:none;font-size:13px;">
+    隨機牌路模式：系統用自訂機率隨機生成 85 局（訓練用，不等於真實賭場牌路）。
+  </div>
+
+  <div style="font-size:13px;margin-top:6px;">
+    ✅ 牌路對你是「隱藏」的，只有電腦知道順序；你只負責每局猜「押莊」或「押閒」。
+  </div>
+</div>
+
+<!-- 狀態 + 統計 -->
+<div class="panel">
+  <div class="row">
+    <div style="flex:1 1 180px;">
+      <div>目前局數：<span id="roundInfo">尚未開始</span></div>
+      <div>本局開：<span id="currentResult" class="highlight">－</span></div>
+    </div>
+    <div style="flex:1 1 220px;">
+      <div>你的正確預測（贏局數）：<span id="winCount">0</span> 局</div>
+      <div>累積盈虧：<span id="netProfit">0</span> 元</div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div><strong>目前統計機率（依已完成局數）</strong></div>
+    <div>
+      <span class="badge banker">莊</span><span id="statBanker">0 局 / 0%</span>　
+      <span class="badge player">閒</span><span id="statPlayer">0 局 / 0%</span>　
+      <span class="badge tie">和</span><span id="statTie">0 局 / 0%</span>
+    </div>
+    <div style="margin-top:4px;font-size:12px;opacity:.8;">
+      ※ 這裡是「這一條牌路目前的實際比例」，方便你觀察偏莊/偏閒/偏和。
+    </div>
+  </div>
+</div>
+
+<!-- 牌路可視化 -->
+<div class="panel">
+  <div class="bead-panel-title">
+    牌路可視化（每一欄 6 局，自上而下，接著往右延伸）
+  </div>
+  <div class="bead-legend">
+    <span class="legend-dot banker"></span>莊（紅）　
+    <span class="legend-dot player"></span>閒（藍）　
+    <span class="legend-dot tie"></span>和局（綠）
+  </div>
+  <div id="beadBoard" class="bead-board"></div>
+</div>
+
+<!-- 下注區 + 策略 -->
+<div class="panel">
+  <div class="row">
+    <label for="betAmount">手動下注金額：</label>
+    <input type="number" id="betAmount" value="1000" step="1000" min="1000" max="80000">
+    <span style="font-size:12px;">（最少 1000，最多 80000，必須是 1000 的倍數）</span>
+  </div>
+
+  <div class="row">
+    <button id="btnBetBanker">手動押莊並開牌（紅）</button>
+    <button id="btnBetPlayer">手動押閒並開牌（藍）</button>
+  </div>
+
+  <div class="row">
+    <label for="strategySelect">策略模式：</label>
+    <select id="strategySelect">
+      <option value="manual">手動下注</option>
+      <option value="allBlue">策略1：全押藍（永遠押閒）</option>
+      <option value="allRed">策略2：全押紅（永遠押莊）</option>
+      <option value="ladder">策略3：1000→2000→3000→6000 階梯</option>
+      <option value="follow">策略4：固定注跟路</option>
+      <option value="reverse">策略5：固定注反路</option>
+    </select>
+    <button id="btnAuto">用策略自動下一局</button>
+  </div>
+
+  <div style="font-size:12px;margin-top:4px;">
+    規則：只接受「押莊」或「押閒」，賠率一律 <strong>1：1</strong>（押莊也不抽水）。<br>
+    若開和局，你的莊/閒注視為和局退回，不輸不贏。<br>
+    策略說明：<br>
+    ‧ 策略 1、2、4、5 的下注金額，以上方輸入框為準。<br>
+    ‧ 策略 3 固定使用 1000 → 2000 → 3000 → 6000 此一組金額循環。
+  </div>
+</div>
+
+<!-- 對局紀錄 -->
+<div class="panel">
+  <div style="margin-bottom:4px;">對局紀錄（最新在最上面）：</div>
+  <textarea id="log" class="log" readonly></textarea>
+</div>
+
+<script>
+(function () {
+  const TOTAL_ROUNDS = 85;
+  let shoe = [];          // 長度 85，只存 'B' / 'P' / 'T'
+  let currentRound = 0;   // 0-based index
+  let done = false;
+
+  let bankerCount = 0, playerCount = 0, tieCount = 0;
+  let winCount = 0;
+  let netProfit = 0;
+
+  let beadCells = [];     // 存 85 個小格子，用來上色
+
+  // 策略狀態
+  const strategies = {
+    current: 'manual',
+    state: {
+      // 策略3：階梯 1000/2000/3000/6000，direction = 下一局要押的方向（'B' 或 'P'）
+      ladder: { step: 1, direction: 'B' }, // 初始先當作壓莊
+      // 策略4：固定注跟路
+      follow: { lastOutcome: null, lastBetSide: 'P' },
+      // 策略5：固定注反路
+      reverse: { lastOutcome: null, lastBetSide: 'P' }
+    }
+  };
+  let lastRoundStrategy = 'manual';
+
+  const els = {
+    modeRadios: document.getElementsByName('mode'),
+    btnInit: document.getElementById('btnInit'),
+    customArea: document.getElementById('customArea'),
+    randomHint: document.getElementById('randomHint'),
+    customSequence: document.getElementById('customSequence'),
+    roundInfo: document.getElementById('roundInfo'),
+    currentResult: document.getElementById('currentResult'),
+    statBanker: document.getElementById('statBanker'),
+    statPlayer: document.getElementById('statPlayer'),
+    statTie: document.getElementById('statTie'),
+    winCount: document.getElementById('winCount'),
+    netProfit: document.getElementById('netProfit'),
+    betAmount: document.getElementById('betAmount'),
+    btnBetBanker: document.getElementById('btnBetBanker'),
+    btnBetPlayer: document.getElementById('btnBetPlayer'),
+    log: document.getElementById('log'),
+    beadBoard: document.getElementById('beadBoard'),
+    strategySelect: document.getElementById('strategySelect'),
+    btnAuto: document.getElementById('btnAuto')
+  };
+
+  function resetStrategiesState() {
+    strategies.state.ladder.step = 1;
+    strategies.state.ladder.direction = 'B';
+    strategies.state.follow.lastOutcome = null;
+    strategies.state.follow.lastBetSide = 'P';
+    strategies.state.reverse.lastOutcome = null;
+    strategies.state.reverse.lastBetSide = 'P';
+    lastRoundStrategy = 'manual';
+    if (els.strategySelect) {
+      els.strategySelect.value = 'manual';
+      strategies.current = 'manual';
+    }
+  }
+
+  function getMode() {
+    for (const r of els.modeRadios) {
+      if (r.checked) return r.value;
+    }
+    return 'custom';
+  }
+
+  function switchModeUI() {
+    const mode = getMode();
+    if (mode === 'custom') {
+      els.customArea.style.display = 'block';
+      els.randomHint.style.display = 'none';
+    } else {
+      els.customArea.style.display = 'none';
+      els.randomHint.style.display = 'block';
+    }
+  }
+
+  function buildBeadBoard() {
+    if (!els.beadBoard) return;
+    els.beadBoard.innerHTML = '';
+    beadCells = [];
+    // 建立 85 個格子，grid-auto-flow: column + 6 列 → 1–6 在第一欄，7–12 在第二欄 ...
+    for (let i = 0; i < TOTAL_ROUNDS; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'bead-cell';
+      cell.dataset.index = i.toString();
+      els.beadBoard.appendChild(cell);
+      beadCells.push(cell);
+    }
+  }
+
+  function clearBeadBoard() {
+    beadCells.forEach(cell => {
+      cell.className = 'bead-cell';
+    });
+  }
+
+  function updateBeadBoard(roundIndex, outcome) {
+    const cell = beadCells[roundIndex];
+    if (!cell) return;
+    cell.className = 'bead-cell';
+    if (outcome === 'B') {
+      cell.classList.add('banker-dot'); // 紅：莊
+    } else if (outcome === 'P') {
+      cell.classList.add('player-dot'); // 藍：閒
+    } else if (outcome === 'T') {
+      cell.classList.add('tie-dot');    // 綠：和
+    }
+  }
+
+  function resetStats() {
+    currentRound = 0;
+    done = false;
+    bankerCount = playerCount = tieCount = 0;
+    winCount = 0;
+    netProfit = 0;
+    els.roundInfo.textContent = '已建立牌路，尚未開始';
+    els.currentResult.textContent = '－';
+    els.winCount.textContent = '0';
+    els.netProfit.textContent = '0';
+    els.log.value = '';
+    updateStatsDisplay();
+    clearBeadBoard();
+    resetStrategiesState();
+  }
+
+  function updateStatsDisplay() {
+    const played = currentRound; // 已完成局數
+    function fmt(count) {
+      if (played === 0) return count + ' 局 / 0%';
+      const pct = (count * 100 / played).toFixed(1);
+      return count + ' 局 / ' + pct + '%';
+    }
+    els.statBanker.textContent = fmt(bankerCount);
+    els.statPlayer.textContent = fmt(playerCount);
+    els.statTie.textContent = fmt(tieCount);
+  }
+
+  function parseCustomSequence(text) {
+    const tokens = text
+      .toUpperCase()
+      .replace(/[^BPT]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+    if (tokens.length !== TOTAL_ROUNDS) {
+      alert('自訂牌路需要剛好 ' + TOTAL_ROUNDS +
+            ' 個結果（B / P / T）。目前是：' + tokens.length + ' 個。');
+      return null;
+    }
+    const valid = tokens.every(t => t === 'B' || t === 'P' || t === 'T');
+    if (!valid) {
+      alert('只允許使用 B（莊）、P（閒）、T（和局）。');
+      return null;
+    }
+    return tokens;
+  }
+
+  function generateRandomShoe() {
+    // 自訂亂數機率（訓練用，不等於真實賭場數據）
+    const probs = [
+      { symbol: 'B', p: 0.45 }, // 莊
+      { symbol: 'P', p: 0.45 }, // 閒
+      { symbol: 'T', p: 0.10 }  // 和
+    ];
+    const result = [];
+    for (let i = 0; i < TOTAL_ROUNDS; i++) {
+      const r = Math.random();
+      let acc = 0;
+      for (const item of probs) {
+        acc += item.p;
+        if (r <= acc) {
+          result.push(item.symbol);
+          break;
+        }
+      }
+      if (!result[i]) result.push('P'); // 浮點誤差保險
+    }
+    return result;
+  }
+
+  function initShoe() {
+    const mode = getMode();
+    if (mode === 'custom') {
+      const seq = parseCustomSequence(els.customSequence.value || '');
+      if (!seq) return;
+      shoe = seq;
+    } else {
+      shoe = generateRandomShoe();
+    }
+    buildBeadBoard();
+    resetStats();
+    els.roundInfo.textContent = '第 1 局 / 共 ' + TOTAL_ROUNDS + ' 局';
+    alert('牌路已建立，開始前請輸入下注金額，或選擇策略後按「用策略自動下一局」。');
+  }
+
+  function readBetAmount() {
+    let v = Number(els.betAmount.value);
+    if (!Number.isFinite(v)) {
+      alert('請輸入下注金額。');
+      return null;
+    }
+    if (v < 1000 || v > 80000) {
+      alert('下注金額需介於 1000 和 80000 之間。');
+      return null;
+    }
+    if (v % 1000 !== 0) {
+      alert('下注金額必須是 1000 的倍數（1000、2000、3000 ...）。');
+      return null;
+    }
+    return v;
+  }
+
+  function updateStrategiesAfterRound(side, bet, outcome, profit, strategyUsed) {
+    // 策略 4、5 需要知道「上一局開什麼、上一局押哪邊」
+    strategies.state.follow.lastOutcome = outcome;
+    strategies.state.follow.lastBetSide = side;
+    strategies.state.reverse.lastOutcome = outcome;
+    strategies.state.reverse.lastBetSide = side;
+
+    // 策略 3：階梯策略，只在該策略運作時更新
+    if (strategyUsed === 'ladder') {
+      const s = strategies.state.ladder;
+
+      if (profit > 0) {
+        // 贏的情況
+        if (s.step === 1) {
+          s.step = 2;
+        } else if (s.step === 2) {
+          s.step = 3;
+        } else if (s.step === 3 || s.step === 4) {
+          // 第 3 步或第 4 步贏：視為一輪結束，重新從 1 步開始
+          s.step = 1;
+          if (outcome === 'B' || outcome === 'P') {
+            s.direction = outcome; // 下輪跟最後贏的那邊
+          }
+        }
+      } else if (profit < 0) {
+        // 輸的情況
+        if (s.step === 1) {
+          s.step = 2;
+        } else if (s.step === 2) {
+          s.step = 3;
+        } else if (s.step === 3) {
+          s.step = 4;
+        } else if (s.step === 4) {
+          // 連輸四步：大虧一輪，重置
+          s.step = 1;
+        }
+        if (outcome === 'B' || outcome === 'P') {
+          // 下一輪改成跟「開出來的那邊」
+          s.direction = outcome;
+        }
+      } else {
+        // 和局：不改 step、不改 direction
+      }
+    }
+  }
+
+  function playRound(side, forcedBet) {
+    if (!shoe || shoe.length !== TOTAL_ROUNDS) {
+      alert('請先按「建立 / 重新產生 85 局」建立牌路。');
+      return;
+    }
+    if (done) {
+      alert('遊戲已結束，請按「建立 / 重新產生 85 局」重新開始。');
+      return;
+    }
+
+    let bet;
+    if (typeof forcedBet === 'number') {
+      bet = forcedBet;
+    } else {
+      bet = readBetAmount();
+      if (bet === null) return;
+    }
+
+    const outcome = shoe[currentRound]; // 'B' 'P' 'T'
+    let profit = 0;
+
+    if (outcome === 'T') {
+      // 和局：莊 / 閒注退回，不輸不贏
+      profit = 0;
+      tieCount++;
+    } else if (outcome === 'B') {
+      bankerCount++;
+      if (side === 'B') {
+        profit = bet;  // 不抽水，1:1
+        winCount++;
+      } else {
+        profit = -bet;
+      }
+    } else if (outcome === 'P') {
+      playerCount++;
+      if (side === 'P') {
+        profit = bet;
+        winCount++;
+      } else {
+        profit = -bet;
+      }
+    }
+
+    netProfit += profit;
+
+    const labelMap = { 'B': '莊', 'P': '閒', 'T': '和局' };
+    els.currentResult.textContent = labelMap[outcome] || '－';
+    els.winCount.textContent = winCount.toString();
+    els.netProfit.textContent = netProfit.toString();
+
+    const roundNumber = currentRound + 1;
+    const sideLabel = side === 'B' ? '押莊' : '押閒';
+    const profitText =
+      profit > 0 ? ('贏 +' + profit) :
+      profit < 0 ? ('輸 ' + (-profit)) :
+      '和局退回 0';
+
+    const line =
+      '第 ' + roundNumber + ' 局：開 ' + (labelMap[outcome] || '?') +
+      '，你' + sideLabel + '，下注 ' + bet +
+      '，本局結果：' + profitText +
+      '，累積盈虧：' + netProfit + '\n';
+
+    // 最新一局顯示在最上面
+    els.log.value = line + els.log.value;
+
+    // 在牌路板上標記這一局的結果
+    updateBeadBoard(currentRound, outcome);
+
+    // 更新策略內部狀態（特別是策略3）
+    updateStrategiesAfterRound(side, bet, outcome, profit, lastRoundStrategy);
+
+    currentRound++;
+    updateStatsDisplay();
+
+    if (currentRound >= TOTAL_ROUNDS) {
+      done = true;
+      els.roundInfo.textContent =
+        '第 ' + TOTAL_ROUNDS + ' 局 / 共 ' + TOTAL_ROUNDS + ' 局（遊戲結束）';
+      alert(
+        TOTAL_ROUNDS +
+        ' 局結束！你一共猜對 ' + winCount +
+        ' 局，累積盈虧：' + netProfit + ' 元。'
+      );
+    } else {
+      els.roundInfo.textContent =
+        '第 ' + (currentRound + 1) + ' 局 / 共 ' + TOTAL_ROUNDS + ' 局';
+    }
+  }
+
+  function applyStrategyOnce() {
+    const mode = strategies.current;
+    if (!shoe || shoe.length !== TOTAL_ROUNDS) {
+      alert('請先建立牌路（上方按「建立 / 重新產生 85 局」）。');
+      return;
+    }
+    if (done) {
+      alert('遊戲已結束，請重新建立牌路。');
+      return;
+    }
+    if (mode === 'manual') {
+      alert('目前是「手動下注」模式，請用下面兩顆「手動押莊 / 手動押閒」按鈕。');
+      return;
+    }
+
+    let side = 'P';
+    let amount = 1000;
+
+    // 共用：先讀 base 金額（給固定注策略用）
+    const baseBet = readBetAmount();
+    if (baseBet === null) {
+      // 對於策略 3（階梯），下面會自己覆蓋 amount，不靠 baseBet
+      // 這裡先檢查一下，如果是非階梯策略且金額不合法就直接退出
+      if (mode !== 'ladder') return;
+    }
+
+    if (mode === 'allBlue') {
+      // 策略1：永遠押閒（藍）
+      side = 'P';
+      amount = baseBet;
+    } else if (mode === 'allRed') {
+      // 策略2：永遠押莊（紅）
+      side = 'B';
+      amount = baseBet;
+    } else if (mode === 'follow') {
+      // 策略4：固定注跟路（跟上一局開的）
+      const st = strategies.state.follow;
+      if (currentRound === 0 || !st.lastOutcome || st.lastOutcome === 'T') {
+        // 第一局或上一局是和局，就沿用上一把壓的方向；若沒有記錄就預設押閒
+        side = st.lastBetSide || 'P';
+      } else {
+        // 跟「上一局開出的那邊」
+        side = st.lastOutcome; // 'B' 或 'P'
+      }
+      amount = baseBet;
+    } else if (mode === 'reverse') {
+      // 策略5：固定注反路（反上一局開的）
+      const st = strategies.state.reverse;
+      if (currentRound === 0 || !st.lastOutcome || st.lastOutcome === 'T') {
+        side = st.lastBetSide || 'P';
+      } else {
+        side = (st.lastOutcome === 'B') ? 'P' : 'B';
+      }
+      amount = baseBet;
+    } else if (mode === 'ladder') {
+      // 策略3：1000→2000→3000→6000 階梯（跟你描述的那套）
+      const st = strategies.state.ladder;
+      side = st.direction || 'B';
+      const ladderAmounts = { 1: 1000, 2: 2000, 3: 3000, 4: 6000 };
+      amount = ladderAmounts[st.step] || 1000;
+    }
+
+    // 安全檢查：限制在 1000～80000 並四捨五入到 1000 倍數
+    if (amount < 1000) amount = 1000;
+    if (amount > 80000) amount = 80000;
+    amount = Math.round(amount / 1000) * 1000;
+
+    els.betAmount.value = amount.toString(); // 顯示在輸入框給你看
+    lastRoundStrategy = mode;
+    playRound(side, amount);
+  }
+
+  // 綁定事件
+  els.btnInit.addEventListener('click', initShoe);
+
+  els.btnBetBanker.addEventListener('click', function () {
+    lastRoundStrategy = 'manual';
+    playRound('B');
+  });
+
+  els.btnBetPlayer.addEventListener('click', function () {
+    lastRoundStrategy = 'manual';
+    playRound('P');
+  });
+
+  for (const r of els.modeRadios) {
+    r.addEventListener('change', switchModeUI);
+  }
+
+  if (els.strategySelect) {
+    strategies.current = els.strategySelect.value;
+    els.strategySelect.addEventListener('change', function () {
+      strategies.current = this.value;
+    });
+  }
+
+  if (els.btnAuto) {
+    els.btnAuto.addEventListener('click', applyStrategyOnce);
+  }
+
+  // 初始化畫面
+  buildBeadBoard();
+  switchModeUI();
+})();
+</script>
+</body>
+</html>
