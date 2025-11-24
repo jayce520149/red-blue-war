@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>百家樂練習遊戲（真實牌點 + 補牌規則 + 莊6點半注 + 連輸/連贏高光 + 4連以上紀錄列表）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --banker-red: #ef4444;  /* 莊 紅色 */
+      --player-blue: #3b82f6; /* 閒 藍色 */
+      --tie-green: #22c55e;   /* 和 綠色 */
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 16px;
+      background: #111827;
+      color: #e5e7eb;
+    }
+    h1 { font-size: 24px; margin-bottom: 8px; }
+    .panel {
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      background: #1f2937;
+    }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    button {
+      cursor: pointer;
+      border-radius: 6px;
+      border: none;
+      padding: 6px 12px;
+      background: #fbbf24;
+      color: #111827;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: #4b5563;
+      color: #e5e7eb;
+    }
+    input[type="number"] { width: 110px; }
+    select {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #4b5563;
+      background: #111827;
+      color: #e5e7eb;
+    }
+    .stats { font-size: 14px; line-height: 1.6; }
+    .log { width: 100%; height: 220px; }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 12px;
+      margin-right: 4px;
+    }
+    .badge.banker { background: var(--banker-red); }
+    .badge.player { background: var(--player-blue); }
+    .badge.tie    { background: #4b5563; }
+    .highlight { font-size: 18px; font-weight: 700; }
+
+    /* 目前連輸 / 連贏 高光 */
+    .streak-warning {
+      color: #f97316;          /* 橘色警示 */
+      font-weight: 700;
+      text-shadow: 0 0 6px rgba(248, 113, 113, 0.8);
+    }
+    .streak-good {
+      color: #4ade80;          /* 綠色高光 */
+      font-weight: 700;
+      text-shadow: 0 0 6px rgba(74, 222, 128, 0.8);
+    }
+
+    /* ⭐ 4 連以上「紀錄列表」：放大、醒目 */
+    .streak-record-row {
+      margin-top: 6px;
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.5;
+    }
+    .streak-record-label {
+      color: #e5e7eb;
+    }
+    .streak-record-win {
+      color: #4ade80;
+    }
+    .streak-record-lose {
+      color: #f97316;
+    }
+
+    /* 牌路可視化（每欄 6 局，向右延伸） */
+    .bead-panel-title { margin-bottom: 6px; font-size: 14px; }
+    .bead-legend { font-size: 12px; margin-bottom: 6px; }
+    .legend-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .legend-dot.banker { background: var(--banker-red); }
+    .legend-dot.player { background: var(--player-blue); }
+    .legend-dot.tie    { background: var(--tie-green); }
+
+    .bead-board {
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 8px;
+      background: #020617;
+      display: grid;
+      grid-auto-flow: column;                /* 先塞滿一欄 6 格，再往右長 */
+      grid-template-rows: repeat(6, 22px);   /* 每欄 6 行 */
+      grid-auto-columns: 22px;               /* 每欄寬度 */
+      column-gap: 4px;
+      row-gap: 4px;
+      width: max-content;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+    .bead-cell {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1px solid #4b5563;
+      box-sizing: border-box;
+    }
+    .bead-cell.banker-dot { background: var(--banker-red); }
+    .bead-cell.player-dot { background: var(--player-blue); }
+    .bead-cell.tie-dot    { background: var(--tie-green); }
+  </style>
+</head>
+<body>
+<h1>百家樂練習遊戲（真實牌點 + 補牌規則 + 莊6點半注 + 連輸/連贏高光 + 4連以上紀錄列表）</h1>
+
+<!-- 重新開始 / 牌堆資訊 -->
+<div class="panel">
+  <div class="row">
+    <button class="secondary" id="btnNewGame">重新開始（洗 4 副牌 + 燒牌 + 重置 85 局）</button>
+  </div>
+  <div class="stats">
+    <div>牌堆狀態：<span id="shoeInfo">尚未開始</span></div>
+  </div>
+</div>
+
+<!-- 狀態 + 統計 -->
+<div class="panel">
+  <div class="row">
+    <div style="flex:1 1 220px;">
+      <div>目前局數：<span id="roundInfo">尚未開始</span></div>
+      <div>本局開：<span id="currentResult" class="highlight">－</span></div>
+    </div>
+    <div style="flex:1 1 360px;">
+      <div>莊點數：<span id="bankerPoints">-</span>　閒點數：<span id="playerPoints">-</span></div>
+      <div>你的正確預測（贏局數）：<span id="winCount">0</span> 局</div>
+      <div>累積盈虧：<span id="netProfit">0</span> 元</div>
+      <div>
+        目前連贏：<span id="winningStreak">0</span> 局　
+        目前連輸：<span id="losingStreak">0</span> 局
+      </div>
+      <!-- ⭐ 放大顯示：4連以上的每一段紀錄 -->
+      <div class="streak-record-row">
+        <div>
+          <span class="streak-record-label">連贏 4 局以上紀錄：</span>
+          <span id="highWinList" class="streak-record-win">目前無</span>
+        </div>
+        <div>
+          <span class="streak-record-label">連輸 4 局以上紀錄：</span>
+          <span id="highLoseList" class="streak-record-lose">目前無</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div><strong>目前統計機率（依已完成局數）</strong></div>
+    <div>
+      <span class="badge banker">莊</span><span id="statBanker">0 局 / 0%</span>　
+      <span class="badge player">閒</span><span id="statPlayer">0 局 / 0%</span>　
+      <span class="badge tie">和</span><span id="statTie">0 局 / 0%</span>
+    </div>
+  </div>
+</div>
+
+<!-- 牌路可視化 -->
+<div class="panel">
+  <div class="bead-panel-title">
+    牌路可視化（每一欄 6 局，自上而下，接著往右延伸）
+  </div>
+  <div class="bead-legend">
+    <span class="legend-dot banker"></span>莊（紅）　
+    <span class="legend-dot player"></span>閒（藍）　
+    <span class="legend-dot tie"></span>和局（綠）
+  </div>
+  <div id="beadBoard" class="bead-board"></div>
+</div>
+
+<!-- 下注區 + 新策略 -->
+<div class="panel">
+  <div class="row">
+    <label for="betAmount">手動下注金額：</label>
+    <input type="number" id="betAmount" value="1000" step="1000" min="1000" max="80000">
+    <span style="font-size:12px;">（最少 1000，最多 80000，需為 1000 的倍數）</span>
+  </div>
+
+  <div class="row">
+    <button id="btnBetBanker">手動押莊並開牌（紅）</button>
+    <button id="btnBetPlayer">手動押閒並開牌（藍）</button>
+  </div>
+
+  <div class="row">
+    <label for="strategySelect">模式：</label>
+    <select id="strategySelect">
+      <option value="manual">手動下注</option>
+      <option value="strategy">新策略：閒起手 1000，三連勝 / 三連敗後重置</option>
+    </select>
+    <button id="btnAuto">用「新策略」自動下一局</button>
+  </div>
+
+  <div style="font-size:12px;margin-top:4px;line-height:1.6;">
+    已實作的百家樂規則：<br>
+    ‧ 牌點：2~9 按牌面；A=1；10 / J / Q / K = 0 點。<br>
+    ‧ 點數總和 ≥10，只看個位數（例如 7+8=15 → 5 點）。<br>
+    ‧ 首兩張任一方 8 或 9：天生贏，雙方都不補牌。<br>
+    ‧ 閒家：首兩張 0~5 補第三張；6、7 停牌；8、9 天生。<br>
+    ‧ 莊家：依照補牌表自動決定要不要補第三張。<br>
+    ‧ 特別規則：<strong>押莊且莊家以 6 點獲勝時，只贏半注（例如押 1000 只賺 500）。</strong><br>
+    ‧ 介面會顯示「目前連贏 / 目前連輸」，以及「所有 4 局以上的連贏 / 連輸紀錄（例如 5、10 局等）」。<br><br>
+    新策略說明（和前一版相同）：<br>
+    ‧ 視為上一把開閒，第一次用策略會下「閒 1000」。<br>
+    ‧ 贏一把 → 計數 +1 → 下 2000 同色；第二把贏 → +2 → 下 3000 同色；<br>
+    　　第三把贏 → +3 → 視為三連勝，清 0，下一輪 1000 同色。<br>
+    ‧ 輸一把 → 計數 -1 → 下 2000 同色（跟開出來那邊）；第二把輸 → -2 → 下 3000 同色；<br>
+    　　第三把輸 → -3 → 視為三連敗，清 0，下一輪 1000 同色。<br>
+    ‧ 和局：計數不變，下一局同方向同金額再打一次。
+  </div>
+</div>
+
+<!-- 對局紀錄 -->
+<div class="panel">
+  <div style="margin-bottom:4px;">對局紀錄（最新在最上面）：</div>
+  <textarea id="log" class="log" readonly></textarea>
+</div>
+
+<script>
+(function () {
+  const TOTAL_ROUNDS = 85;
+  const NUM_DECKS = 4;           // 4 副牌
+  const STREAK_ALERT = 4;        // 連贏 / 連輸 ≥4：高光 + 列入紀錄
+
+  // 一張牌：只存「百家樂點數」與「燒牌用的點數」
+  // value：A=1, 2~9=牌面, 10/J/Q/K=0
+  // burn：A=1, 2~9=牌面, 10/J/Q/K=10
+  let deck = [];
+  let shoeIndex = 0;
+  let lastBurnInfo = null;       // {shoeIndex, burnExtra, totalBurn}
+
+  let currentRound = 0;
+  let done = false;
+  let bankerCount = 0, playerCount = 0, tieCount = 0;
+  let winCount = 0;
+  let netProfit = 0;
+  let losingStreak = 0;
+  let winningStreak = 0;
+
+  // ⭐ 儲存「每一段」4 局以上的連贏 / 連輸
+  // 例如：這輪連贏 5 局 → push(5)；之後又連贏 10 局 → 再 push(10)
+  let highWinningStreaks = [];
+  let highLosingStreaks = [];
+
+  let beadCells = [];
+
+  // 新策略狀態
+  const strategy = {
+    current: 'manual',
+    count: 0,            // >0=連勝次數；<0=連敗次數；0=新一輪
+    lastOutcome: 'P'     // 視為上一局開閒 → 第一把押閒
+  };
+
+  const els = {
+    btnNewGame: document.getElementById('btnNewGame'),
+    shoeInfo: document.getElementById('shoeInfo'),
+    roundInfo: document.getElementById('roundInfo'),
+    currentResult: document.getElementById('currentResult'),
+    bankerPoints: document.getElementById('bankerPoints'),
+    playerPoints: document.getElementById('playerPoints'),
+    statBanker: document.getElementById('statBanker'),
+    statPlayer: document.getElementById('statPlayer'),
+    statTie: document.getElementById('statTie'),
+    winCount: document.getElementById('winCount'),
+    netProfit: document.getElementById('netProfit'),
+    winningStreak: document.getElementById('winningStreak'),
+    losingStreak: document.getElementById('losingStreak'),
+    highWinList: document.getElementById('highWinList'),
+    highLoseList: document.getElementById('highLoseList'),
+    betAmount: document.getElementById('betAmount'),
+    btnBetBanker: document.getElementById('btnBetBanker'),
+    btnBetPlayer: document.getElementById('btnBetPlayer'),
+    strategySelect: document.getElementById('strategySelect'),
+    btnAuto: document.getElementById('btnAuto'),
+    log: document.getElementById('log'),
+    beadBoard: document.getElementById('beadBoard')
+  };
+
+  /* ------------ 小工具：更新 4 連以上紀錄顯示 ------------ */
+
+  function updateHighStreakDisplay() {
+    if (highWinningStreaks.length > 0) {
+      els.highWinList.textContent = highWinningStreaks.join('、') + ' 局';
+    } else {
+      els.highWinList.textContent = '目前無';
+    }
+    if (highLosingStreaks.length > 0) {
+      els.highLoseList.textContent = highLosingStreaks.join('、') + ' 局';
+    } else {
+      els.highLoseList.textContent = '目前無';
+    }
+  }
+
+  /* ------------ 牌堆與燒牌 ------------ */
+
+  function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  }
+
+  function drawCard() {
+    if (deck.length === 0) return null;
+    return deck.pop();
+  }
+
+  function updateShoeInfo() {
+    if (!lastBurnInfo) {
+      els.shoeInfo.textContent = '尚未洗牌';
+    } else {
+      els.shoeInfo.textContent =
+        '第 ' + lastBurnInfo.shoeIndex +
+        ' 副牌，開場共燒 ' + lastBurnInfo.totalBurn +
+        ' 張，目前牌堆剩 ' + deck.length + ' 張';
+    }
+  }
+
+  function buildNewShoe() {
+    shoeIndex++;
+    deck = [];
+
+    // 建立 NUM_DECKS 副牌
+    for (let d = 0; d < NUM_DECKS; d++) {
+      for (let rank = 1; rank <= 13; rank++) {
+        const value = (rank === 1) ? 1 : (rank >= 10 ? 0 : rank);
+        const burnVal = (rank >= 10) ? 10 : rank;
+        for (let s = 0; s < 4; s++) {
+          deck.push({ value, burn: burnVal });
+        }
+      }
+    }
+
+    shuffleArray(deck);
+
+    // 開場燒牌（第一張 + 該張點數）
+    let firstCard = drawCard();
+    let burnExtra = firstCard ? firstCard.burn : 0;
+    let totalBurn = firstCard ? 1 : 0;
+    for (let i = 0; i < burnExtra && deck.length > 0; i++) {
+      drawCard();
+      totalBurn++;
+    }
+    lastBurnInfo = { shoeIndex, burnExtra, totalBurn };
+    updateShoeInfo();
+
+    const msg =
+      '*** 新牌堆：第 ' + shoeIndex +
+      ' 副牌，開場共燒掉 ' + totalBurn +
+      ' 張（第一張算 ' + burnExtra + '），目前剩餘 ' + deck.length + ' 張 ***\n';
+    els.log.value = msg + els.log.value;
+  }
+
+  function ensureShoe(minCards) {
+    if (deck.length < minCards) {
+      buildNewShoe(); // 自動換新一鞋
+    }
+  }
+
+  /* ------------ 統計 & 牌路 ------------ */
+
+  function buildBeadBoard() {
+    els.beadBoard.innerHTML = '';
+    beadCells = [];
+    for (let i = 0; i < TOTAL_ROUNDS; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'bead-cell';
+      cell.dataset.index = i.toString();
+      els.beadBoard.appendChild(cell);
+      beadCells.push(cell);
+    }
+  }
+
+  function clearBeadBoard() {
+    beadCells.forEach(cell => { cell.className = 'bead-cell'; });
+  }
+
+  function updateBeadBoard(roundIndex, outcome) {
+    const cell = beadCells[roundIndex];
+    if (!cell) return;
+    cell.className = 'bead-cell';
+    if (outcome === 'B') cell.classList.add('banker-dot');
+    else if (outcome === 'P') cell.classList.add('player-dot');
+    else if (outcome === 'T') cell.classList.add('tie-dot');
+  }
+
+  function updateStatsDisplay() {
+    const played = currentRound;
+    function fmt(count) {
+      if (played === 0) return count + ' 局 / 0%';
+      const pct = (count * 100 / played).toFixed(1);
+      return count + ' 局 / ' + pct + '%';
+    }
+    els.statBanker.textContent = fmt(bankerCount);
+    els.statPlayer.textContent = fmt(playerCount);
+    els.statTie.textContent = fmt(tieCount);
+  }
+
+  function resetGameState() {
+    currentRound = 0;
+    done = false;
+    bankerCount = playerCount = tieCount = 0;
+    winCount = 0;
+    netProfit = 0;
+    losingStreak = 0;
+    winningStreak = 0;
+    highWinningStreaks = [];
+    highLosingStreaks = [];
+
+    els.roundInfo.textContent = '尚未開始';
+    els.currentResult.textContent = '－';
+    els.bankerPoints.textContent = '-';
+    els.playerPoints.textContent = '-';
+    els.winCount.textContent = '0';
+    els.netProfit.textContent = '0';
+    els.losingStreak.textContent = '0';
+    els.winningStreak.textContent = '0';
+    els.losingStreak.classList.remove('streak-warning');
+    els.winningStreak.classList.remove('streak-good');
+    els.log.value = '';
+
+    clearBeadBoard();
+    updateStatsDisplay();
+    updateHighStreakDisplay();
+
+    strategy.current = 'manual';
+    strategy.count = 0;
+    strategy.lastOutcome = 'P';
+    els.strategySelect.value = 'manual';
+  }
+
+  function startNewGame() {
+    shoeIndex = 0;
+    deck = [];
+    lastBurnInfo = null;
+    resetGameState();
+    buildNewShoe();
+    els.roundInfo.textContent = '第 1 局 / 共 ' + TOTAL_ROUNDS + ' 局';
+  }
+
+  /* ------------ 百家樂點數與補牌 ------------ */
+
+  function handTotal(cards) {
+    let sum = 0;
+    for (const c of cards) sum += c.value;
+    return sum % 10;
+  }
+
+  function dealOneHand() {
+    ensureShoe(6);
+
+    const playerCards = [drawCard(), drawCard()];
+    const bankerCards = [drawCard(), drawCard()];
+
+    let pTotal = handTotal(playerCards);
+    let bTotal = handTotal(bankerCards);
+
+    let playerThird = null;
+    let bankerThird = null;
+
+    // 自然牌：任一方 8 或 9
+    if (pTotal >= 8 || bTotal >= 8) {
+      // 不補牌
+    } else {
+      // 閒家補牌規則
+      if (pTotal <= 5) {
+        playerThird = drawCard();
+        if (playerThird) {
+          playerCards.push(playerThird);
+          pTotal = handTotal(playerCards);
+        }
+      }
+
+      // 莊家補牌規則
+      if (!playerThird) {
+        // 閒沒補牌：莊 0~5 補，6、7 停
+        if (bTotal <= 5) {
+          bankerThird = drawCard();
+          if (bankerThird) {
+            bankerCards.push(bankerThird);
+            bTotal = handTotal(bankerCards);
+          }
+        }
+      } else {
+        // 閒有第三張：依表判斷莊是否補牌
+        const ptc = playerThird.value;
+        const bt = bTotal;
+        let drawBanker = false;
+
+        if (bt <= 2) {
+          drawBanker = true;
+        } else if (bt === 3 && ptc !== 8) {
+          drawBanker = true;
+        } else if (bt === 4 && ptc >= 2 && ptc <= 7) {
+          drawBanker = true;
+        } else if (bt === 5 && ptc >= 4 && ptc <= 7) {
+          drawBanker = true;
+        } else if (bt === 6 && (ptc === 6 || ptc === 7)) {
+          drawBanker = true;
+        }
+
+        if (drawBanker) {
+          bankerThird = drawCard();
+          if (bankerThird) {
+            bankerCards.push(bankerThird);
+            bTotal = handTotal(bankerCards);
+          }
+        }
+      }
+    }
+
+    let outcome;
+    if (pTotal > bTotal) outcome = 'P';
+    else if (pTotal < bTotal) outcome = 'B';
+    else outcome = 'T';
+
+    return {
+      outcome,
+      playerTotal: pTotal,
+      bankerTotal: bTotal
+    };
+  }
+
+  /* ------------ 金額與策略 ------------ */
+
+  function readBetAmount() {
+    let v = Number(els.betAmount.value);
+    if (!Number.isFinite(v)) {
+      alert('請輸入下注金額。');
+      return null;
+    }
+    if (v < 1000 || v > 80000) {
+      alert('下注金額需介於 1000 和 80000 之間。');
+      return null;
+    }
+    if (v % 1000 !== 0) {
+      alert('下注金額必須是 1000 的倍數（1000、2000、3000 ...）。');
+      return null;
+    }
+    return v;
+  }
+
+  function getStrategyNextBet() {
+    const side = strategy.lastOutcome || 'P';
+    const abs = Math.abs(strategy.count);
+    let amount;
+    if (abs === 0) amount = 1000;
+    else if (abs === 1) amount = 2000;
+    else amount = 3000;
+    return { side, amount };
+  }
+
+  function updateStrategyAfterRound(side, bet, outcome, profit, source) {
+    if (outcome === 'B' || outcome === 'P') {
+      strategy.lastOutcome = outcome;
+    }
+    if (source !== 'strategy') return;
+    if (outcome === 'T') return;
+
+    if (profit > 0) {
+      if (strategy.count > 0) strategy.count += 1;
+      else strategy.count = 1;
+    } else if (profit < 0) {
+      if (strategy.count < 0) strategy.count -= 1;
+      else strategy.count = -1;
+    }
+
+    if (strategy.count >= 3 || strategy.count <= -3) {
+      strategy.count = 0;
+    }
+  }
+
+  /* ------------ 若遊戲結束，把最後一段連贏 / 連輸也收錄 ------------ */
+
+  function finalizeStreaksAtEnd() {
+    if (winningStreak >= STREAK_ALERT) {
+      highWinningStreaks.push(winningStreak);
+    }
+    if (losingStreak >= STREAK_ALERT) {
+      highLosingStreaks.push(losingStreak);
+    }
+    updateHighStreakDisplay();
+  }
+
+  /* ------------ 主流程：打一局 ------------ */
+
+  function playRound(side, forcedBet, source) {
+    if (done) {
+      alert('本輪 85 局已結束，請按「重新開始」開新一輪。');
+      return;
+    }
+    if (deck.length === 0) {
+      alert('請先按上方「重新開始」洗牌並燒牌。');
+      return;
+    }
+
+    let bet;
+    if (typeof forcedBet === 'number') {
+      bet = forcedBet;
+    } else {
+      bet = readBetAmount();
+      if (bet === null) return;
+    }
+
+    const deal = dealOneHand();
+    const outcome = deal.outcome;
+    const pTotal = deal.playerTotal;
+    const bTotal = deal.bankerTotal;
+
+    if (outcome === 'B') bankerCount++;
+    else if (outcome === 'P') playerCount++;
+    else tieCount++;
+
+    els.bankerPoints.textContent = bTotal.toString();
+    els.playerPoints.textContent = pTotal.toString();
+
+    let profit = 0;
+    let bankerSixHalfPay = false;
+
+    if (outcome === 'T') {
+      profit = 0;
+    } else if (outcome === 'B') {
+      if (side === 'B') {
+        if (bTotal === 6) {
+          // 押莊且莊 6 點勝，只贏半注
+          profit = bet / 2;
+          bankerSixHalfPay = true;
+        } else {
+          profit = bet;
+        }
+        winCount++;
+      } else {
+        profit = -bet;
+      }
+    } else if (outcome === 'P') {
+      if (side === 'P') {
+        profit = bet;
+        winCount++;
+      } else {
+        profit = -bet;
+      }
+    }
+
+    // ⭐ 更新連贏 / 連輸前，先記住舊值，用來判斷「哪一段 streak 被結束」
+    const prevWinningStreak = winningStreak;
+    const prevLosingStreak = losingStreak;
+
+    // 更新連贏 / 連輸（只看有沒有贏錢）
+    if (profit > 0) {
+      // 這局贏：上一段連輸如果 ≥4，就先記起來
+      if (prevLosingStreak >= STREAK_ALERT) {
+        highLosingStreaks.push(prevLosingStreak);
+      }
+      winningStreak++;
+      losingStreak = 0;
+    } else if (profit < 0) {
+      // 這局輸：上一段連贏如果 ≥4，就先記起來
+      if (prevWinningStreak >= STREAK_ALERT) {
+        highWinningStreaks.push(prevWinningStreak);
+      }
+      losingStreak++;
+      winningStreak = 0;
+    } else {
+      // 和局：上一段連贏 / 連輸如果有 ≥4，都記起來，然後歸零
+      if (prevWinningStreak >= STREAK_ALERT) {
+        highWinningStreaks.push(prevWinningStreak);
+      }
+      if (prevLosingStreak >= STREAK_ALERT) {
+        highLosingStreaks.push(prevLosingStreak);
+      }
+      winningStreak = 0;
+      losingStreak = 0;
+    }
+
+    els.losingStreak.textContent = String(losingStreak);
+    els.winningStreak.textContent = String(winningStreak);
+
+    // 高光：目前連續 ≥4
+    if (losingStreak >= STREAK_ALERT) {
+      els.losingStreak.classList.add('streak-warning');
+    } else {
+      els.losingStreak.classList.remove('streak-warning');
+    }
+    if (winningStreak >= STREAK_ALERT) {
+      els.winningStreak.classList.add('streak-good');
+    } else {
+      els.winningStreak.classList.remove('streak-good');
+    }
+
+    // 更新 4 連以上紀錄文字（如果有新的被 push 進陣列）
+    updateHighStreakDisplay();
+
+    netProfit += profit;
+
+    const labelMap = { 'B': '莊', 'P': '閒', 'T': '和局' };
+    els.currentResult.textContent = labelMap[outcome] || '－';
+    els.winCount.textContent = String(winCount);
+    els.netProfit.textContent = String(netProfit);
+
+    let profitText;
+    if (profit > 0) {
+      profitText = '贏 +' + profit;
+    } else if (profit < 0) {
+      profitText = '輸 ' + (-profit);
+    } else {
+      profitText = '和局退回 0';
+    }
+    if (bankerSixHalfPay) {
+      profitText += '（莊 6 點勝，只賺半注）';
+    }
+    if (losingStreak >= STREAK_ALERT) {
+      profitText += '｜⚠ 目前連輸 ' + losingStreak + ' 局（小心風險）';
+    }
+    if (winningStreak >= STREAK_ALERT) {
+      profitText += '｜✨ 目前連贏 ' + winningStreak + ' 局';
+    }
+
+    const roundNumber = currentRound + 1;
+    const sideLabel = side === 'B' ? '押莊' : '押閒';
+
+    const line =
+      '第 ' + roundNumber + ' 局：開 ' + (labelMap[outcome] || '?') +
+      '（莊 ' + bTotal + ' 點，閒 ' + pTotal + ' 點），你' + sideLabel +
+      '，下注 ' + bet + '，本局結果：' + profitText +
+      '，累積盈虧：' + netProfit + '\n';
+
+    els.log.value = line + els.log.value;
+
+    updateBeadBoard(currentRound, outcome);
+    updateStrategyAfterRound(side, bet, outcome, profit, source);
+
+    currentRound++;
+    updateStatsDisplay();
+
+    if (currentRound >= TOTAL_ROUNDS) {
+      done = true;
+      // 遊戲結束前，把最後一段 streak（如果 ≥4）也記起來
+      finalizeStreaksAtEnd();
+      els.roundInfo.textContent =
+        '第 ' + TOTAL_ROUNDS + ' 局 / 共 ' + TOTAL_ROUNDS + ' 局（遊戲結束）';
+      alert(
+        TOTAL_ROUNDS +
+        ' 局結束！你一共猜對 ' + winCount +
+        ' 局，累積盈虧：' + netProfit + ' 元。\n' +
+        '連贏 4+ 局紀錄：' + (highWinningStreaks.length ? highWinningStreaks.join('、') + ' 局' : '無') + '\n' +
+        '連輸 4+ 局紀錄：' + (highLosingStreaks.length ? highLosingStreaks.join('、') + ' 局' : '無')
+      );
+    } else {
+      els.roundInfo.textContent =
+        '第 ' + (currentRound + 1) + ' 局 / 共 ' + TOTAL_ROUNDS + ' 局';
+    }
+  }
+
+  function applyStrategyOnce() {
+    if (strategy.current !== 'strategy') {
+      alert('請先在下拉選單選「新策略」，再按這顆按鈕。');
+      return;
+    }
+    if (done) {
+      alert('本輪 85 局已結束，請按「重新開始」。');
+      return;
+    }
+    if (deck.length === 0) {
+      alert('請先按「重新開始」洗牌並燒牌。');
+      return;
+    }
+
+    const next = getStrategyNextBet();
+    let side = next.side;
+    let amount = next.amount;
+
+    if (amount < 1000) amount = 1000;
+    if (amount > 80000) amount = 80000;
+    amount = Math.round(amount / 1000) * 1000;
+
+    els.betAmount.value = String(amount);
+    playRound(side, amount, 'strategy');
+  }
+
+  /* ------------ 綁定事件 & 初始化 ------------ */
+
+  els.btnNewGame.addEventListener('click', startNewGame);
+  els.btnBetBanker.addEventListener('click', () => playRound('B', null, 'manual'));
+  els.btnBetPlayer.addEventListener('click', () => playRound('P', null, 'manual'));
+  els.strategySelect.addEventListener('change', function () {
+    strategy.current = this.value;
+  });
+  els.btnAuto.addEventListener('click', applyStrategyOnce);
+
+  buildBeadBoard();
+  resetGameState();
+})();
+</script>
+</body>
+</html>
